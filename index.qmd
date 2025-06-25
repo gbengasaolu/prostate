@@ -1,0 +1,777 @@
+---
+title: "Non-Communicable Disease Risk Factors in Adult Men (1980–2008)"
+author: Olugbenga Asaolu
+format: dashboard
+editor: visual
+---
+
+::: hidden
+```{r}
+if(!require('pacman')) install.packages('pacman')
+
+pacman::p_load(tidyverse,
+               colorspace,
+               ggspatial,
+               janitor,
+               ggplot2,
+               readxl,
+               spData,
+               units,
+               here,
+               sf, 
+               rgeoboundaries,
+               rnaturalearth,  
+               tibble,
+               terra,
+               dplyr,
+               tidyr,
+               readr,
+               prettymapr,
+               tidyr,
+               stringr,
+               visdat, 
+               inspectdf,
+               gtsummary, 
+               reactable, 
+               scales, 
+               plotly,
+               crosstalk,
+               countrycode,
+               leaflet,
+               echarts4r, 
+               DT,
+               bslib,
+               bsicons,
+               htmltools,
+               shiny)
+
+pacman::p_load_gh("yutannihilation/ggsflabel",
+                  "afrimapr/afrihealthsites",
+                  "afrimapr/afrilearndata",
+                  "avallecam/epihelper")
+```
+
+```{r}
+bmi <- read_csv(here::here("data/body_mass_index_bmi_men_kgperm2.csv"))
+bmi
+```
+
+```{r}
+pc <- read_csv(here::here("data/prostate_cancer_number_of_male_deaths.csv"))
+pc 
+```
+
+```{r}
+smk <- read_csv(here::here("data/smoking_adults_percent_of_population_over_age_15.csv"))
+smk
+```
+
+```{r}
+# pivot BMI data from wide to long
+bmi_long <-bmi %>% 
+  pivot_longer(
+    cols = matches("^(19|20)\\d{2}$"),  # matches year-like column names
+    names_to = "year", 
+    values_to = "bmi"
+  ) %>% 
+  mutate(year = as.integer(year))  # convert character year to integer
+bmi_long
+```
+
+```{r}
+# pivot Prostate cancer data from wide to long
+pc_long <-pc %>% 
+  pivot_longer(
+    cols = matches("^(19|20)\\d{2}$"),  # matches year-like column names
+    names_to = "year", 
+    values_to = "prostate_deaths"
+  ) %>% 
+  mutate(year = as.integer(year))  # convert character year to integer
+pc_long
+```
+
+```{r}
+# pivot smoking rate data from wide to long
+smk_long <-smk %>% 
+  pivot_longer(
+    cols = matches("^(19|20)\\d{2}$"),  # matches year-like column names
+    names_to = "year", 
+    values_to = "smokers_percent"
+  ) %>% 
+  mutate(year = as.integer(year))  # convert character year to integer
+smk_long
+```
+
+```{r}
+bmi_pc_long_joined <- 
+  bmi_long %>%
+  left_join(pc_long, by = c("country", "year"))
+bmi_pc_long_joined
+```
+
+```{r}
+bmi_pc_smk_joined <- 
+  bmi_pc_long_joined %>%
+  left_join(smk_long, by = c("country", "year"))
+bmi_pc_smk_joined 
+```
+
+```{r}
+#Add Continent Column
+bmi_pc_smk_joined <- bmi_pc_smk_joined %>%
+  mutate(continent = countrycode(country, origin = "country.name", destination = "continent"))
+bmi_pc_smk_joined
+```
+
+```{r}
+bmi_pc_smk_clean  <- bmi_pc_smk_joined %>%                       
+  mutate(
+    prostate_deaths_num =
+      parse_number(prostate_deaths) *              # strip out digits / decimals
+      if_else(                                # multiply by 1 000 when value ends with “k” or “K”
+        str_detect(prostate_deaths, regex("k$", ignore_case = TRUE)),
+        1000, 0
+      )
+  )
+bmi_pc_smk_clean
+```
+
+```{r}
+# Create data subset for visualizing multiple categories
+bmi_pc_smk_mini <- filter(bmi_pc_smk_joined ,
+                   country %in% c("United States",
+                                  "Australia",
+                                  "Germany", "Nigeria", "Kenya", "Bahamas"))
+bmi_pc_smk_mini
+
+```
+
+```{r}
+# Map country to color
+ggplot(data = bmi_pc_smk_mini, 
+       mapping = aes(y = bmi, x = year, 
+                     group = country, 
+                     color = country)) +
+  geom_line(size = 1) +
+  geom_point(size = 2)
+```
+
+```{r}
+bmi_pc_smk_mini_clean  <- bmi_pc_smk_mini %>%                       # replace “df” with your data-frame name
+  mutate(
+    prostate_deaths_num =
+      parse_number(prostate_deaths) *              # strip out digits / decimals
+      if_else(                                     # multiply by 1 000 when value ends with “k” or “K”
+        str_detect(prostate_deaths, regex("k$", ignore_case = TRUE)),
+        1000, 0
+      )
+  )
+bmi_pc_smk_mini_clean
+```
+
+```{r}
+# KPI value box – Global mean BMI (1980-2008)
+global_mean_bmi <- bmi_pc_smk_mini_clean %>%
+  filter(year >= 1980, year <= 2008) %>%
+  summarize(mean_bmi = mean(bmi, na.rm = TRUE)) %>%
+  pull(mean_bmi)
+global_mean_bmi
+```
+
+```{r}
+# KPI value box – Highest recorded BMI (country-year)
+highest_bmi_row <- bmi_pc_smk_mini_clean %>%
+  filter(!is.na(bmi)) %>%
+  arrange(desc(bmi)) %>%
+  slice(1)
+
+
+highest_bmi <- highest_bmi_row$bmi
+bmi_label <- paste0(highest_bmi_row$country, " (", highest_bmi_row$year, ")")
+highest_bmi
+```
+
+```{r}
+# KPI value box – Total deaths (1990-2008)
+total_deaths <- bmi_pc_smk_mini_clean %>%
+  filter(year >= 1990 & year <= 2008) %>%
+  summarize(total = sum(prostate_deaths_num, na.rm = TRUE)) %>%
+  pull(total)
+total_deaths 
+```
+
+```{r}
+#KPI value box – % change (1990-2008)
+deaths_1990 <- bmi_pc_smk_mini_clean %>%
+  filter(year == 1990) %>%
+  summarize(total = sum(prostate_deaths_num, na.rm = TRUE)) %>%
+  pull(total)
+
+deaths_2008 <- bmi_pc_smk_mini_clean %>%
+  filter(year == 2008) %>%
+  summarize(total = sum(prostate_deaths_num, na.rm = TRUE)) %>%
+  pull(total)
+
+percent_change <- ((deaths_2008 - deaths_1990) / deaths_1990) * 100
+percent_change
+```
+
+```{r}
+# KPI value box – Mean smokers % (all countries)
+# Smokers % (2002-2005) 
+mean_smokers <- bmi_pc_smk_mini_clean %>%
+  summarize(mean_smokers = mean(smokers_percent, na.rm = TRUE)) %>%
+  pull(mean_smokers)
+mean_smokers
+```
+
+```{r}
+#Top 15 Countries by Mean BMI (Blue Color Scale)
+
+# Prepare the top 15countries by average BMI
+top_15_bmi <- bmi_pc_smk_joined %>%
+  group_by(country) %>%
+  summarize(mean_bmi = mean(bmi, na.rm = TRUE)) %>%
+  arrange(desc(mean_bmi)) %>%
+  slice_max(mean_bmi, n = 15) %>%
+  arrange(mean_bmi)  # sort for horizontal bar chart aesthetics
+
+# Create the bar chart
+bmi_bar <- plot_ly(
+  data = top_15_bmi,
+  x = ~mean_bmi,
+  y = ~reorder(country, mean_bmi),
+  type = 'bar',
+  orientation = 'h',
+  marker = list(color = ~mean_bmi, colorscale = 'lightseagreen')
+) %>%
+  layout(
+    xaxis = list(title = "Average BMI"),
+    yaxis = list(title = ""),
+    coloraxis = list(showscale = FALSE)
+  )
+
+bmi_bar
+```
+
+```{r}
+# Create Regional BMI Summary Table
+regional_summary <- bmi_pc_smk_clean %>%
+  group_by(continent) %>%
+  summarize(
+    `Lowest BMI Average` = round(min(bmi, na.rm = TRUE), 2),
+    `Country with Lowest BMI Average` = country[which.min(bmi)],
+    `Highest BMI Average` = round(max(bmi, na.rm = TRUE), 2),
+    `Country with Highest BMI Average` = country[which.max(bmi)]
+  ) %>%
+  ungroup()
+
+# Render datatable with centered numeric columns
+datatable(regional_summary, options = list(pageLength = 10)) %>%
+  formatStyle(
+    columns = c("Lowest BMI Average", "Highest BMI Average"),
+    `text-align` = "center"
+  )
+```
+
+```{r}
+# Create Regional prostate cancer deaths Summary Table
+regional__pcd_summary <- bmi_pc_smk_clean %>%
+  group_by(continent) %>%
+  summarize(
+    `Average Prostate Deaths` = round(mean(prostate_deaths_num, na.rm = TRUE), 2),
+    `Highest Prostate Deaths` = round(max(prostate_deaths_num, na.rm = TRUE), 2),
+    `Country with Highest Prostate Deaths` = country[which.max(prostate_deaths_num)]
+  ) %>%
+  ungroup()
+  
+# Render datatable with centered numeric columns
+datatable(regional__pcd_summary, options = list(pageLength = 10)) %>%
+  formatStyle(
+    columns = c("Average Prostate Deaths", "Highest Prostate Deaths"),
+    `text-align` = "center"
+  )
+```
+
+```{r}
+# Assume your cleaned tibble is called `bmi_pc_smk_mini_clean`
+# Columns: country, year, bmi, prostate_deaths_num, smokers_percent
+
+top_bmi_inc_tbl <-bmi_pc_smk_mini_clean |>
+  filter(year %in% c(1980, 2008)) |>
+  select(country, year, bmi) |>
+  pivot_wider(
+    names_from  = year,
+    values_from = bmi,
+    names_prefix = "bmi_"
+  ) |>
+  drop_na(bmi_1980, bmi_2008) |>
+  mutate(delta_bmi = bmi_2008 - bmi_1980) |>
+  arrange(desc(delta_bmi)) |>
+  slice_head(n = 5)
+
+# Interactive table (reactable) – ready for Quarto/Shiny
+
+## 📊 Top 5 Countries with the Highest BMI Increase (1980–2008)
+reactable(
+  top_bmi_inc_tbl,
+  columns = list(
+    country   = colDef(name = "Country"),
+    bmi_1980  = colDef(name = "BMI 1980",  format = colFormat(digits = 1)),
+    bmi_2008  = colDef(name = "BMI 2008",  format = colFormat(digits = 1)),
+    delta_bmi = colDef(
+      name   = "Δ BMI 1980→2008",
+      format = colFormat(digits = 1),
+      style  = JS("function(cellInfo) {
+        const v = cellInfo.value;
+        return { color: v >= 0 ? 'green' : 'red', fontWeight: 'bold' };
+      }")
+    )
+  ),
+  striped       = TRUE,
+  highlight     = TRUE,
+  defaultSorted = "delta_bmi",
+  defaultSortOrder = "desc",
+  pagination    = FALSE
+)
+
+```
+
+```{r}
+# Assume your cleaned tibble is called `bmi_pc_smk_mini_clean`
+# Columns: country, year, bmi, prostate_deaths_num, smokers_percent
+
+top_pc_inc_tbl <-bmi_pc_smk_clean %>%
+  filter(year %in% c(1990, 2008)) %>%
+  select(country, year, prostate_deaths_num) %>%
+  pivot_wider(
+    names_from  = year,
+    values_from = prostate_deaths_num,
+    names_prefix = "pdm_"
+  ) %>%
+  drop_na(pdm_1990, pdm_2008) %>%
+  mutate(delta_pdm = pdm_2008 - pdm_1990) %>%
+  arrange(desc(delta_pdm)) %>%
+  slice_head(n = 5)
+
+# Interactive table (reactable) – ready for Quarto/Shiny
+reactable(
+  top_pc_inc_tbl,
+  columns = list(
+    country   = colDef(name = "Country"),
+    pdm_1990  = colDef(name = "Prostate Deaths 1990",  format = colFormat(digits = 1)),
+    pdm_2008  = colDef(name = "Prostate Deaths 2008",  format = colFormat(digits = 1)),
+    delta_pdm = colDef(
+      name   = "Δ Prostate Dths 1990→2008",
+      format = colFormat(digits = 1),
+      style  = JS("function(cellInfo) {
+        const v = cellInfo.value;
+        return { color: v >= 0 ? 'green' : 'red', fontWeight: 'bold' };
+      }")
+    )
+  ),
+  striped       = TRUE,
+  highlight     = TRUE,
+  defaultSorted = "delta_pdm",
+  defaultSortOrder = "desc",
+  pagination    = FALSE
+)
+```
+
+```{r}
+#Interactive line plot – BMI trend per country
+  
+
+# Clean input  ----------------------------------------------------------
+# assume your tibble is `indicators`
+bmi_trend <- bmi_pc_smk_mini_clean %>%
+  filter(!is.na(bmi)) %>%               # keep rows with valid BMI
+  arrange(country, year)
+
+# Create a shared data object so the user can click / brush to isolate a country
+shared_bmi <- highlight_key(bmi_trend, ~country)
+
+# Static ggplot (one line per country) ----------------------------------
+g_bmi <- ggplot(shared_bmi,
+            aes(x = year,
+                y = bmi,
+                group = country,
+                colour = country,
+                text = paste0(
+                  "<b>", country, "</b>",
+                  "<br>Year: ", year,
+                  "<br>BMI: ", round(bmi, 1)
+                ))) +
+  geom_line(size = 1) +
+  geom_point(size = 1.5) +
+  scale_colour_viridis_d(option = "turbo", guide = "none") +  # hide legend; use click-isolate instead
+  labs(x = NULL,
+       y = "Mean BMI") +
+  theme_minimal(base_size = 13)
+
+# Convert to Plotly & add interactivity ---------------------------------
+fig_bmi <- ggplotly(g_bmi, tooltip = "text") %>%
+  layout(hovermode = "closest") %>%
+  highlight(on  = "plotly_click",   # click a line to focus
+            off = "plotly_doubleclick",
+            opacityDim = 0.2,
+            color    = "red",
+            selected = attrs_selected(line = list(width = 4)))
+
+fig_bmi
+```
+
+```{r}
+#––––– Packages –––––
+library(bslib)        # Quarto ≥1.5 / Shiny "value_box()" helper
+# If your project uses {bs4Dash}, swap to bs4Dash::valueBox()
+
+#––––– Reactive or static calculation –––––
+# Assume tibble `indicators` exists with columns: country, year, bmi
+
+global_mean_bmi <- bmi_pc_smk_mini_clean %>%
+  filter(year >= 1980, year <= 2008, !is.na(bmi)) %>%
+  summarise(mean_bmi = mean(bmi, na.rm = TRUE)) %>%
+  pull(mean_bmi)
+```
+
+```{r}
+bmi_plot<-bmi_pc_smk_clean %>% 
+  count(continent, name = "bmi") %>%          # tally cases per province
+  ggplot(aes(x = bmi,     # order bars by frequency
+             y = reorder(continent, bmi))) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +                               # put provinces on the y-axis
+  labs(
+    title = "Average Number of BMI by Continent",
+    x     = " ",
+    y     = "Frequency"
+  ) +
+  theme_minimal(base_size = 12)
+
+# convert to an interactive plotly object
+interactive_plot <- ggplotly(bmi_plot, tooltip = "text")
+
+interactive_plot    # prints (or returns) the interactive bar chart
+```
+
+```{r}
+bmi_pc_smk_clean
+```
+
+```{r}
+bmi_pc_smk_2008 <- bmi_pc_smk_clean %>%                                      # raw tibble
+  filter(year == 2008) %>%                                           # snapshot
+  mutate(
+    # ensure BMI numeric
+    bmi = as.numeric(bmi),
+
+    # convert character “prostate_deaths” → numeric (strip ‘k’, commas, spaces)
+    prostate_deaths_chr = prostate_deaths,
+    prostate_deaths = str_remove_all(prostate_deaths_chr, ",|\\s*k$") %>% 
+                       as.numeric(),
+
+    # smokers_percent sometimes arrives as character
+    smokers_percent = as.numeric(smokers_percent)
+  ) %>% 
+  select(country, continent, bmi, smokers_percent, prostate_deaths) %>% 
+  drop_na(bmi, prostate_deaths) 
+bmi_pc_smk_2008
+```
+
+```{r}
+ggplot(bmi_pc_smk_2008, aes(bmi, prostate_deaths)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  labs(
+    x = "Average BMI (adult males)",
+    y = "Prostate-cancer deaths"
+  ) +
+  theme_minimal()
+
+cor.test(bmi_pc_smk_2008$bmi, bmi_pc_smk_2008$prostate_deaths, use = "complete.obs")
+```
+:::
+
+# Home
+
+## Row {height="20%"}
+
+```{r}
+value_box(
+  title = "Global Mean BMI",
+  value = round(global_mean_bmi, 1),
+  showcase = bsicons::bs_icon("heart"),
+  theme = value_box_theme(bg= "purple"),
+  p(paste0("Average BMI across all countries"))
+)
+```
+
+```{r}
+value_box(
+  title = "Highest BMI",
+  value = round(highest_bmi, 1),
+  showcase = bsicons::bs_icon("arrow-up"),
+  theme = value_box_theme(bg= "red"),
+  p(paste0(bmi_label))
+)
+```
+
+```{r}
+value_box(
+  title = "Total Prostate Cancer Deaths",
+  value = format(total_deaths, big.mark = ","),
+  showcase = bsicons::bs_icon("person-fill"),
+  theme = value_box_theme(bg= "orange")
+)
+```
+
+```{r}
+value_box(
+  title = "% Change in Prostate Cancer Deaths",
+  value = paste0(round(percent_change, 1), "%"),
+  showcase = bsicons::bs_icon ("arrow-up"),
+  theme = ifelse(percent_change > 0, "red", "green")
+)
+```
+
+```{r}
+value_box(
+  title = "Mean Smoking Prevalence",
+  value = paste0(round(mean_smokers, 1), "%"),
+  showcase = bsicons::bs_icon("fire"),
+  theme = value_box_theme(bg= "blue")
+)
+```
+
+## Row {height="80%"}
+
+```{r title= "Map of Countries by Average BMI"}
+# Country choropleth – Mean BMI (1980-2008)
+
+# 1. Summarise mean BMI per country (2002-2005) -------------------------
+bmi_mean <- bmi_pc_smk_clean  %>%                       # your tibble
+  filter(year %in% 1980:2008, !is.na(bmi)) %>%
+  group_by(country) %>%
+  summarise(mean_bmi = mean(bmi, na.rm = TRUE), .groups = "drop") %>%
+  mutate(iso3 = countrycode(country, "country.name", "iso3c"))
+
+# 2. Load world polygons & join -----------------------------------------
+world_sf <- rnaturalearth::ne_countries(scale = "medium",
+                                        returnclass = "sf") %>%
+  select(iso_a3, name_long, geometry)
+
+map_data <- world_sf %>%
+  left_join(bmi_mean, by = c("iso_a3" = "iso3"))     # some rows will be NA
+
+# 3. Define palette (colour-blind-safe) ---------------------------------
+pal <- colorNumeric(
+  palette = "viridis",
+  domain  = map_data$mean_bmi,
+  na.color = "grey90"
+)
+
+# 4. Build leaflet choropleth ------------------------------------------
+leaflet(map_data, options = leafletOptions(worldCopyJump = TRUE)) |>
+  addTiles() |>
+  addPolygons(
+    fillColor   = ~pal(mean_bmi),
+    weight      = 0.5,
+    opacity     = 1,
+    color       = "white",
+    dashArray   = "3",
+    fillOpacity = 0.8,
+    highlightOptions = highlightOptions(
+      weight      = 2,
+      color       = "#666",
+      dashArray   = "",
+      fillOpacity = 0.9,
+      bringToFront = TRUE),
+    label = ~sprintf(
+      "<strong>%s</strong><br/>Mean BMI (1980–2008: %s",
+      name_long,
+      ifelse(is.na(mean_bmi), "NA", round(mean_bmi, 1))
+    ) |>
+      lapply(htmltools::HTML),
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "13px",
+      direction = "auto")
+  ) |>
+  addLegend(
+    pal     = pal,
+    values  = ~mean_bmi,
+    opacity = 0.7,
+    title   = "Mean BMI",
+    position = "bottomright"
+  )
+```
+
+```{r title= "Top 15 Countries by Average BMI"}
+bmi_bar
+```
+
+# BMI
+
+## Row
+
+```{r title= "Top 5 Countries with the Highest BMI Increase (1980–2008)"}
+reactable(
+  top_bmi_inc_tbl,
+  columns = list(
+    country   = colDef(name = "Country"),
+    bmi_1980  = colDef(name = "BMI 1980",  format = colFormat(digits = 1)),
+    bmi_2008  = colDef(name = "BMI 2008",  format = colFormat(digits = 1)),
+    delta_bmi = colDef(
+      name   = "Δ BMI 1980→2008",
+      format = colFormat(digits = 1),
+      style  = JS("function(cellInfo) {
+        const v = cellInfo.value;
+        return { color: v >= 0 ? 'green' : 'red', fontWeight: 'bold' };
+      }")
+    )
+  ),
+  striped       = TRUE,
+  highlight     = TRUE,
+  defaultSorted = "delta_bmi",
+  defaultSortOrder = "desc",
+  pagination    = FALSE
+)
+```
+
+```{r title= "BMI Trend by Country (1980 – 2008)"}
+fig_bmi
+```
+
+## Row
+
+```{r title= "Regional BMI Summary Table"}
+# Render datatable with centered numeric columns
+datatable(regional_summary, options = list(pageLength = 10)) %>%
+  formatStyle(
+    columns = c("Lowest BMI Average", "Highest BMI Average"),
+    `text-align` = "center"
+  )
+```
+
+🧍‍♂️ Global Trends in Body Weight (BMI)
+
+This section gives a quick look at how body weight has changed around the world using Body Mass Index (BMI).
+
+**Over Time:** From 1980 to 2008, average BMI increased in all five countries studied. The biggest jump was in the Bahamas, while Kenya had the smallest change.
+
+**By Country:** Countries like Australia, Germany, and the Bahamas had higher BMI levels throughout the years. Nigeria and Kenya started lower but still showed a gradual rise.
+
+**By Continent:** The highest BMI was seen in Nauru (Oceania), while the lowest was in Vietnam (Asia). This helps us see where people tend to weigh more or less on average.
+
+These trends highlight how lifestyle and diet are affecting health across different parts of the world.
+
+# Prostate Deaths
+
+## Row
+
+```{r title= "Regional Prostate Cancer Deaths Summary Table"}
+# Render datatable with centered numeric columns
+datatable(regional__pcd_summary, options = list(pageLength = 10)) %>%
+  formatStyle(
+    columns = c("Average Prostate Deaths", "Highest Prostate Deaths"),
+    `text-align` = "center"
+  )
+```
+
+## Row
+
+🌍 **Prostate Cancer Deaths by Continent**
+
+This data shows the average and highest number of prostate cancer deaths in each continent.
+
+**Africa:** On average, 44 deaths. Nigeria has the highest number in Africa with 11,600 deaths.
+
+**Americas:** Highest average with about 1,275 deaths, and USA has the most at 39,100 deaths.
+
+**Asia:** Average of 943 deaths. China recorded the highest at 36,700 deaths.
+
+**Europe:** Around 970 deaths on average. Germany leads with 16,200 deaths.
+
+**Oceania:** There were no reported deaths in this dataset.
+
+This helps us see where prostate cancer deaths are most common and which countries are most affected.
+
+# BMI vs Prostate Cancer Deaths
+
+### 
+
+```{r title="BMI vs. prostate-cancer deaths in 2008 (scatter + OLS line)"}
+ggplot(bmi_pc_smk_2008, aes(bmi, prostate_deaths)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1) +
+  labs(
+    x = "Average BMI (adult males)",
+    y = "Prostate-cancer deaths"
+  ) +
+  theme_minimal()
+```
+
+### 
+
+The scatter-plot juxtaposes average male Body-Mass Index (BMI) against the annual count of prostate-cancer deaths for each country in 2008, with an ordinary-least-squares (OLS) regression line summarizing the bivariate trend. The near-horizontal slope indicates that BMI explains only a trivial fraction of the variance in prostate-cancer mortality at the ecological (country) level. Although a weak positive gradient is discernible---suggesting deaths rise slightly as population BMI increases---the correlation is very small and not likely to be statistically or clinically meaningful given the breadth of the confidence band one would expect around such a line. The dense cloud of points at low mortality across the entire BMI range reinforces this: countries spanning BMIs of \~21--31 kg/m² frequently record fewer than 1 000 prostate-cancer deaths, implying other determinants overshadow the contribution of adiposity when deaths are summed across whole populations.
+
+From an epidemiological standpoint, the absence of a strong monotonic relationship is unsurprising. Prostate-cancer mortality is shaped by age distribution, screening intensity (PSA testing), access to timely treatment, genetic predisposition, and competing risks, all of which vary widely between countries and can obscure a modest biologic effect of obesity. Moreover, ecological data mask within-country heterogeneity and introduce aggregation bias; individual-level studies do report a modest association between obesity and aggressive or advanced prostate cancer, driven by hormonal and metabolic pathways (e.g., insulin-like growth factors, sex-steroid alterations). Therefore, while higher BMI plausibly worsens prostate-cancer prognosis at the individual level, the population-level picture shown here demonstrates that obesity alone is an inadequate predictor of cross-national mortality without accounting for screening coverage, healthcare quality, and demographic structure.
+
+# Download Data
+
+The data used in this dashboard is shown below and can be downloaded as a CSV.
+
+```{r}
+# install/load packages --------------------------------------------------------
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman")
+pacman::p_load(
+  htmltools,         # wrap reactable + button in a browsable tag list
+  reactable          # interactive tables
+)
+
+# -----------------------------------------------------------------------------#
+#  render an interactive table of the flu data and add a "Download as CSV"
+#  button that respects filters / searches the user applies in-browser
+# -----------------------------------------------------------------------------#
+
+htmltools::browsable(
+  tagList(
+    reactable(
+       bmi_pc_smk_joined,
+      elementId  = "Bmi-table",   # <- used by the JS download helper
+      searchable = TRUE,
+      filterable = TRUE,
+      defaultPageSize = 10,
+      highlight     = TRUE,
+      bordered      = TRUE,
+      striped       = TRUE,
+      compact       = TRUE,
+      columns = list(              # a couple of niceties
+        country           = colDef(name = "Country"),
+        year = colDef(name = "Year"),
+        bmi         = colDef(name = "Body Mass Index (BMI) – Men"),
+        prostate_deaths                 = colDef(name = "Prostate Cancer Deaths", filterable = TRUE),
+        smokers_percent                     = colDef(name = "Smoking Prevalence – Adults", align = "right")
+      )
+    ),
+    
+    # HTML button that triggers the CSV download
+    tags$button(
+      "Download as CSV",
+      onclick = "Reactable.downloadDataCSV('Bmi-table')",
+      style   = "margin-top: 10px; padding: 6px 12px;"
+    )
+  )
+)
+```
+
+# About
+
+📊 About the Data This dashboard presents a comparative analysis of three key health indicators among adult men across multiple countries and years, focusing on non-communicable disease risk factors and outcomes.
+
+🔹 **Prostate Cancer Deaths**: The total number of male deaths due to prostate cancer is reported annually for each country. This metric highlights the burden of prostate cancer mortality over time and across geographies. Source: International Agency for Research on Cancer (IARC)
+
+🔹 **Body Mass Index (BMI)**: Men The mean Body Mass Index (BMI) represents the average weight-to-height ratio (in kg/m²) of adult men. The values are age-standardized based on the global population structure, allowing for meaningful comparisons between countries and over time. Source: Imperial College London -- School of Public Health
+
+🔹 **Smoking Prevalence**: Adults This indicator reflects the percentage of adults (aged 15+) who smoke, regardless of gender. Due to data availability limitations, only the 2005 estimates are provided. While not male-specific, the metric offers relevant contextual information for population-level tobacco use. Source: World Health Organization (WHO) Global Health Observatory
